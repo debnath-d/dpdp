@@ -6,6 +6,7 @@ import torch
 try:
     import cupy
     from torch.utils.dlpack import from_dlpack, to_dlpack
+
     _cupy_import_error = None
 
 except Exception as e:
@@ -27,7 +28,8 @@ def to_pt(a):
 def _ensure_cupy():
     if _cupy_import_error is not None:
         raise RuntimeError(
-            'CuPy is not available. Reason: \n{}'.format(_cupy_import_error))
+            "CuPy is not available. Reason: \n{}".format(_cupy_import_error)
+        )
 
 
 @contextlib.contextmanager
@@ -76,8 +78,7 @@ def use_torch_mempool_in_cupy():
     global _allocator, _using_torch_mempool
 
     _ensure_cupy()
-    _allocator = cupy.cuda.memory.PythonFunctionAllocator(
-        _torch_alloc, _torch_free)
+    _allocator = cupy.cuda.memory.PythonFunctionAllocator(_torch_alloc, _torch_free)
     cupy.cuda.set_allocator(_allocator.malloc)
 
     _using_torch_mempool = True
@@ -88,11 +89,11 @@ def _torch_alloc(size, device_id):
     cupy_stream_ptr = cupy.cuda.get_current_stream().ptr
     if torch_stream_ptr != cupy_stream_ptr:
         raise RuntimeError(
-            'The current stream set in PyTorch and CuPy must be same.'
-            ' Use `pytorch_pfn_extras.cuda.stream` instead of'
-            ' `torch.cuda.stream`.')
-    return torch.cuda.caching_allocator_alloc(
-            size, device_id, torch_stream_ptr)
+            "The current stream set in PyTorch and CuPy must be same."
+            " Use `pytorch_pfn_extras.cuda.stream` instead of"
+            " `torch.cuda.stream`."
+        )
+    return torch.cuda.caching_allocator_alloc(size, device_id, torch_stream_ptr)
 
 
 def _torch_free(mem_ptr, device_id):

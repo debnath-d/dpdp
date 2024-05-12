@@ -1,15 +1,15 @@
 import os
 import time
+
 import numpy as np
+import torch
 from scipy.spatial.distance import pdist, squareform
 from sklearn.utils import shuffle
-import torch
 from utils.data_utils import load_dataset
 
 
 class DotDict(dict):
-    """Wrapper around in-built dict class to access members through the dot operation.
-    """
+    """Wrapper around in-built dict class to access members through the dot operation."""
 
     def __init__(self, **kwds):
         self.update(kwds)
@@ -22,19 +22,27 @@ def make_instance(args):
     if len(args) > 0:
         depot_types, customer_types, grid_size = args
     return {
-        'loc': torch.tensor(loc, dtype=torch.float) / grid_size,
-        'demand': torch.tensor(demand, dtype=torch.float) / capacity,
-        'depot': torch.tensor(depot, dtype=torch.float) / grid_size
+        "loc": torch.tensor(loc, dtype=torch.float) / grid_size,
+        "demand": torch.tensor(demand, dtype=torch.float) / capacity,
+        "depot": torch.tensor(depot, dtype=torch.float) / grid_size,
     }
 
 
-class VRPReader(object):
+class VRPReader:
     """Iterator that reads VRP dataset files and yields mini-batches.
 
     Format as used in https://github.com/wouterkool/attention-learn-to-route
     """
 
-    def __init__(self, num_nodes, num_neighbors, batch_size, filepath, target_filepath=None, do_shuffle=False):
+    def __init__(
+        self,
+        num_nodes,
+        num_neighbors,
+        batch_size,
+        filepath,
+        target_filepath=None,
+        do_shuffle=False,
+    ):
         """
         Args:
             num_nodes: Number of nodes in VRP tours (excl depot)
@@ -53,7 +61,13 @@ class VRPReader(object):
         if target_filepath is not None:
             self.has_target = True
             target_filedata, parallelism = load_dataset(target_filepath)
-            self.filedata = list([(inst, sol) for inst, sol in zip(filedata, target_filedata) if sol is not None])
+            self.filedata = list(
+                [
+                    (inst, sol)
+                    for inst, sol in zip(filedata, target_filedata)
+                    if sol is not None
+                ]
+            )
         else:
             self.has_target = False
             self.filedata = list([(inst, None) for inst in filedata])
@@ -61,8 +75,12 @@ class VRPReader(object):
         if do_shuffle:
             self.shuffle()
 
-        self.max_iter = (len(self.filedata) // batch_size)
-        assert self.max_iter > 0, "Not enough instances ({}) for batch size ({})".format(len(self.filedata), batch_size)
+        self.max_iter = len(self.filedata) // batch_size
+        assert (
+            self.max_iter > 0
+        ), "Not enough instances ({}) for batch size ({})".format(
+            len(self.filedata), batch_size
+        )
 
     def shuffle(self):
         self.filedata = shuffle(self.filedata)  # Always shuffle upon reading data
@@ -74,8 +92,7 @@ class VRPReader(object):
             yield self.process_batch(self.filedata[start_idx:end_idx])
 
     def process_batch(self, batch):
-        """Helper function to convert raw lines into a mini-batch as a DotDict.
-        """
+        """Helper function to convert raw lines into a mini-batch as a DotDict."""
         batch_edges = []
         batch_edges_values = []
         batch_edges_target = []  # Binary classification targets (0/1)
@@ -120,7 +137,7 @@ class VRPReader(object):
             #                 nodes_coord.append([float(line[idx]), float(line[idx + 1])])
 
             # Compute distance matrix
-            W_val = squareform(pdist(loc_with_depot, metric='euclidean'))
+            W_val = squareform(pdist(loc_with_depot, metric="euclidean"))
 
             # Compute adjacency matrix
             if self.num_neighbors == -1:
@@ -130,7 +147,9 @@ class VRPReader(object):
                 #
                 W = np.zeros((num_nodes + 1, num_nodes + 1))
                 # Determine k-nearest neighbors for each node
-                knns = np.argpartition(W_val, kth=self.num_neighbors, axis=-1)[:, self.num_neighbors::-1]
+                knns = np.argpartition(W_val, kth=self.num_neighbors, axis=-1)[
+                    :, self.num_neighbors :: -1
+                ]
                 # Make connections
                 for idx in range(num_nodes):
                     W[idx][knns[idx]] = 1
@@ -147,7 +166,6 @@ class VRPReader(object):
             # 3: node-depot
             # 4: node-depot knn
             # 5: depot self-loop
-
 
             # Convert tour nodes to required format
             # Don't add final connection for tour/cycle
@@ -178,7 +196,9 @@ class VRPReader(object):
                 edges_target[tour_nodes[0]][j] = 1
                 tour_len += W_val[j][tour_nodes[0]]
 
-                edges_target[0][0] = 0  # In case we had padding, don't add self-edge at depot
+                edges_target[0][0] = (
+                    0  # In case we had padding, don't add self-edge at depot
+                )
 
                 # batch_nodes_target.append(nodes_target)
                 # batch_tour_nodes.append(tour_nodes)
@@ -194,7 +214,6 @@ class VRPReader(object):
             batch_nodes_coord.append(loc_with_depot)
             batch_nodes_demand.append(demand)
 
-
         # From list to tensors as a DotDict
         batch = DotDict()
         batch.edges = np.stack(batch_edges, axis=0)
@@ -203,7 +222,13 @@ class VRPReader(object):
         batch.nodes_coord = np.stack(batch_nodes_coord, axis=0)
         batch.nodes_demand = np.stack(batch_nodes_demand, axis=0)
         # Pad features into nodes_coord, todo rename
-        batch.nodes_coord = np.concatenate((batch.nodes_coord, np.pad(batch.nodes_demand, ((0, 0), (1, 0)))[:, :, None]), -1)
+        batch.nodes_coord = np.concatenate(
+            (
+                batch.nodes_coord,
+                np.pad(batch.nodes_demand, ((0, 0), (1, 0)))[:, :, None],
+            ),
+            -1,
+        )
 
         if self.has_target:
             # batch.nodes_route_idx = np.stack(batch_route_idx_per_node, axis=0)

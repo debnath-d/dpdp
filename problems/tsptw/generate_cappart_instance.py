@@ -1,11 +1,20 @@
 import random
+
 import numpy as np
 from scipy.spatial.distance import cdist
 
 
 # Taken from https://github.com/qcappart/hybrid-cp-rl-solver/blob/master/src/problem/tsptw/environment/tsptw.py
-def generate_random_instance(n_city, grid_size, max_tw_gap, max_tw_size,
-                             is_integer_instance, seed, fast=True, da_silva_style=False):
+def generate_random_instance(
+    n_city,
+    grid_size,
+    max_tw_gap,
+    max_tw_size,
+    is_integer_instance,
+    seed,
+    fast=True,
+    da_silva_style=False,
+):
     """
     :param n_city: number of cities
     :param grid_size: x-pos/y-pos of cities will be in the range [0, grid_size]
@@ -25,16 +34,23 @@ def generate_random_instance(n_city, grid_size, max_tw_gap, max_tw_size,
     y_coord = [rand.uniform(0, grid_size) for _ in range(n_city)]
     coord = np.array([x_coord, y_coord]).transpose()
 
-    if fast:  # Improved code but could (theoretically) give different results with rounding?
+    if (
+        fast
+    ):  # Improved code but could (theoretically) give different results with rounding?
         travel_time = cdist(coord, coord)
         if is_integer_instance:
             travel_time = travel_time.round().astype(np.int)
     else:
         travel_time = []
         for i in range(n_city):
-
-            dist = [float(np.sqrt((x_coord[i] - x_coord[j]) ** 2 + (y_coord[i] - y_coord[j]) ** 2))
-                    for j in range(n_city)]
+            dist = [
+                float(
+                    np.sqrt(
+                        (x_coord[i] - x_coord[j]) ** 2 + (y_coord[i] - y_coord[j]) ** 2
+                    )
+                )
+                for j in range(n_city)
+            ]
 
             if is_integer_instance:
                 dist = [round(x) for x in dist]
@@ -51,8 +67,7 @@ def generate_random_instance(n_city, grid_size, max_tw_gap, max_tw_size,
 
     total_dist = 0
     for i in range(1, n_city):
-
-        prev_city = random_solution[i-1]
+        prev_city = random_solution[i - 1]
         cur_city = random_solution[i]
 
         cur_dist = travel_time[prev_city][cur_city]

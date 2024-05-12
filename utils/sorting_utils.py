@@ -1,10 +1,12 @@
-import torch
 import math
 
+import torch
 
 try:
     import cupy as cp
+
     from .cupy_utils import ensure_torch_mempool_in_cupy, to_cp, to_pt
+
     _cupy_import_error = None
 except Exception as e:
     _cupy_import_error = e
@@ -15,17 +17,33 @@ def kthvalue_via_cupy(vals, k):
     ensure_torch_mempool_in_cupy()
     with cp.cuda.Device(vals.device.index):
         vals_partitioned = to_pt(cp.partition(to_cp(vals), k))
-    return vals_partitioned[k-1].clone()  # To release the memory of vals_partitioned we clone
+    return vals_partitioned[
+        k - 1
+    ].clone()  # To release the memory of vals_partitioned we clone
 
 
-def kthvalue(vals, k, dim=-1, outmask=None, return_count_le=False, return_index=False, min_steps='auto', early_stop_max_k=None, max_chunk_size=int(1e7)):
+def kthvalue(
+    vals,
+    k,
+    dim=-1,
+    outmask=None,
+    return_count_le=False,
+    return_index=False,
+    min_steps="auto",
+    early_stop_max_k=None,
+    max_chunk_size=int(1e7),
+):
     """
     Custom implementation of kthvalue for large tensors, which uses a binary search.
     """
-    assert early_stop_max_k is None or not return_index, "Returning index not compatible with early stop"
+    assert (
+        early_stop_max_k is None or not return_index
+    ), "Returning index not compatible with early stop"
     if early_stop_max_k is None:
         early_stop_max_k = k
-    needle_size = (early_stop_max_k - k + 1) # How big is the interval we should hit (at least 1)
+    needle_size = (
+        early_stop_max_k - k + 1
+    )  # How big is the interval we should hit (at least 1)
 
     # We make the mask a long since this we need to have a long anyway when summing
     mask = outmask if outmask is not None else torch.empty_like(vals, dtype=torch.bool)
@@ -39,7 +57,11 @@ def kthvalue(vals, k, dim=-1, outmask=None, return_count_le=False, return_index=
     # Compute expected minimal number of steps, take some margin since we can be unlucky
     # Device the number of items were searching for the size of the interval we should hit
     # dividing the two gives by how much we should reduce the search space so we need log2(ratio) steps expected
-    steps = compute_needed_bits((vals.size(dim) + needle_size - 1) // needle_size)[0] + 2 if min_steps == 'auto' else min_steps
+    steps = (
+        compute_needed_bits((vals.size(dim) + needle_size - 1) // needle_size)[0] + 2
+        if min_steps == "auto"
+        else min_steps
+    )
     try:
         MINVAL = vals.new_tensor(torch.iinfo(vals.dtype).min)
         is_integer = True
@@ -48,8 +70,11 @@ def kthvalue(vals, k, dim=-1, outmask=None, return_count_le=False, return_index=
         is_integer = False
 
     if len(vals) > max_chunk_size:
+
         def compute_sum(val, dim):
-            return torch.stack([chunk.sum(dim) for chunk in val.split(max_chunk_size, dim=dim)], dim).sum(dim)
+            return torch.stack(
+                [chunk.sum(dim) for chunk in val.split(max_chunk_size, dim=dim)], dim
+            ).sum(dim)
     else:
         compute_sum = torch.sum
 
@@ -57,19 +82,27 @@ def kthvalue(vals, k, dim=-1, outmask=None, return_count_le=False, return_index=
     ub_val, ub_ind = vals.max(dim)
 
     success = False
-    mid_val, mid_ind = ub_val, ub_ind  # Initialize with ub_ind so that if lb_val == ub_val this is the corresponding idx
+    mid_val, mid_ind = (
+        ub_val,
+        ub_ind,
+    )  # Initialize with ub_ind so that if lb_val == ub_val this is the corresponding idx
     count_le = vals.size(0)  # Everything is smaller or equal than upper bound
     # Note: even though we have floating point precision, the actual values will always be one of the elements
     # so we can use exact comparison
     while lb_val != ub_val and not (k <= count_le <= early_stop_max_k):
-
         for i in range(steps):
             # We should round down, so if lb_val and ub_val are very close, then we should never get the ub_val out
-            mid_val = ((lb_val + ub_val) // 2) if is_integer else ((lb_val + ub_val) / 2).clamp(max=torch.nextafter(ub_val, lb_val))
+            mid_val = (
+                ((lb_val + ub_val) // 2)
+                if is_integer
+                else ((lb_val + ub_val) / 2).clamp(max=torch.nextafter(ub_val, lb_val))
+            )
             torch.le(vals, mid_val, out=mask)
             count_le = compute_sum(mask, dim)
             # Find largest value <= mid_val, this is the actual value!
-            mid_val_exact, mid_ind = torch.where(mask, vals, MINVAL).max(dim)  # Vector with entries > mid set to lb
+            mid_val_exact, mid_ind = torch.where(mask, vals, MINVAL).max(
+                dim
+            )  # Vector with entries > mid set to lb
 
             # Note: this is a scalar tensor
             success = count_le >= k
@@ -80,7 +113,11 @@ def kthvalue(vals, k, dim=-1, outmask=None, return_count_le=False, return_index=
             # Note as lower bound, mid val cannot work so we can set mid_val_above as lower bound
             # Which is a bit tighter
             # As new lower bound, set mid_val + 1 (or float equivalent)
-            lb_val = torch.where(success, lb_val, mid_val + 1 if is_integer else torch.nextafter(mid_val, ub_val))
+            lb_val = torch.where(
+                success,
+                lb_val,
+                mid_val + 1 if is_integer else torch.nextafter(mid_val, ub_val),
+            )
 
         # Typically we will be done, otherwise do some more steps (but half the size)
         steps = 1
@@ -98,9 +135,13 @@ def kthvalue(vals, k, dim=-1, outmask=None, return_count_le=False, return_index=
         kthval_idx = mid_ind
     assert (kthval_idx >= 0).all()
 
-    assert count_le >= k or not return_count_le  # May be incorrect if we don't return it
+    assert (
+        count_le >= k or not return_count_le
+    )  # May be incorrect if we don't return it
     if return_index:
-        return (kthval, kthval_idx, count_le) if return_count_le else (kthval, kthval_idx)
+        return (
+            (kthval, kthval_idx, count_le) if return_count_le else (kthval, kthval_idx)
+        )
     else:
         return (kthval, count_le) if return_count_le else kthval
 
@@ -122,7 +163,7 @@ def binpack_greedy(items, weights, max_weight):
 def compute_needed_bits(num):
     neededbits = 0
     capacity = 1
-    while (capacity < num):
+    while capacity < num:
         neededbits += 1
         capacity = capacity << 1
     return neededbits, capacity
@@ -145,7 +186,9 @@ def pack_keys(chunk):
 
 # Faster unique: implicitly builds a tree and computes unique for each and merges
 # Assumes you always want to uniqueify the inner dimension of two since then each row to be sorted is contiguous!
-def unique_inverse(list_of_tensors, return_index=False, return_counts=False, device=None):
+def unique_inverse(
+    list_of_tensors, return_index=False, return_counts=False, device=None
+):
     """
     Finds unique rows/k-tuples in a n x k matrix represented as k vectors/'columns'.
     Can also accept a matrix directly in which case it must be k x n
@@ -161,14 +204,16 @@ def unique_inverse(list_of_tensors, return_index=False, return_counts=False, dev
     # TODO: we may be able to use a better bin packing heuristic that requires less sorts
     # TODO: instead of bit shifting we may multiply by num_groups to pack even denser at some extra computation
 
-    final = len(list_of_tensors) == 1  # If we have just one row we need to make sure to return correct outputs
+    final = (
+        len(list_of_tensors) == 1
+    )  # If we have just one row we need to make sure to return correct outputs
     # TODO if the input consists of less than 64 bits we may be able to combine from the start (not unique first)
     queue = [
         unique1d(
             row.to(device),
             return_index=final and return_index,
             return_inverse=True,
-            return_counts=final and return_counts
+            return_counts=final and return_counts,
         )
         for row in list_of_tensors
     ]
@@ -176,18 +221,26 @@ def unique_inverse(list_of_tensors, return_index=False, return_counts=False, dev
     while len(queue) > 1:
         needed_bits = [compute_needed_bits(len(unq))[0] for unq, inv in queue]
 
-        chunks = list(binpack_greedy(zip(queue, needed_bits), needed_bits, MAX_BITS_PACK))
+        chunks = list(
+            binpack_greedy(zip(queue, needed_bits), needed_bits, MAX_BITS_PACK)
+        )
         final = len(chunks) == 1
         # There must be at least one chunk that is combinable otherwise we have a problem
         assert any(len(chunk) > 1 for chunk, bits in chunks), "No chunk to be combined"
         # This highlights the parallel nature
         queue = []
-        while(len(chunks) > 0):
-            chunk, totalbits = chunks.pop(0)  # By doing loop this way, this is the only reference to the chunk
+        while len(chunks) > 0:
+            chunk, totalbits = chunks.pop(
+                0
+            )  # By doing loop this way, this is the only reference to the chunk
 
             if len(chunk) == 1:
-                res = chunk.pop()  # Get the single item, output of the unique function call
-                queue.append(res)  # TODO shouldn't we return res[0], this is what it was before...
+                res = (
+                    chunk.pop()
+                )  # Get the single item, output of the unique function call
+                queue.append(
+                    res
+                )  # TODO shouldn't we return res[0], this is what it was before...
                 continue
 
             keys = pack_keys(chunk)
@@ -196,7 +249,7 @@ def unique_inverse(list_of_tensors, return_index=False, return_counts=False, dev
                 keys,
                 return_index=final and return_index,
                 return_inverse=True,
-                return_counts=final and return_counts
+                return_counts=final and return_counts,
             )
             del keys
             queue.append(res)
@@ -234,7 +287,14 @@ def unique_consecutive_inverse(a, dim=0, out=None):
     return torch.cumsum(out, 0, out=out)
 
 
-def unique_consecutive(a, dim=0, return_vals=True, return_index=False, return_inverse=False, return_counts=False):
+def unique_consecutive(
+    a,
+    dim=0,
+    return_vals=True,
+    return_index=False,
+    return_inverse=False,
+    return_counts=False,
+):
     df = torch.empty(a.size(dim), dtype=torch.bool, device=a.device)
     df[0] = True
     diff(a, dim=dim, out=df[1:])
@@ -274,7 +334,9 @@ def unique1d(a, return_index=False, return_inverse=False, return_counts=False):
     # TODO option to first check unique consequtive, only uniqify these and then restore to full unique
     # TODO option for boolean mask which indicates entries that are already unique
     # We need the inverse to return the index
-    res = torch.unique(a, return_inverse=return_inverse or return_index, return_counts=return_counts)
+    res = torch.unique(
+        a, return_inverse=return_inverse or return_index, return_counts=return_counts
+    )
     if not return_index:
         return res
     unq, inverse, counts = res if return_counts else (*res, None)

@@ -1,5 +1,6 @@
 import os
 import pickle
+
 import numpy as np
 
 
@@ -10,19 +11,17 @@ def check_extension(filename):
 
 
 def save_dataset(dataset, filename):
-
     filedir = os.path.split(filename)[0]
 
     if not os.path.isdir(filedir):
         os.makedirs(filedir)
 
-    with open(check_extension(filename), 'wb') as f:
+    with open(check_extension(filename), "wb") as f:
         pickle.dump(dataset, f, pickle.HIGHEST_PROTOCOL)
 
 
 def load_dataset(filename):
-
-    with open(check_extension(filename), 'rb') as f:
+    with open(check_extension(filename), "rb") as f:
         return pickle.load(f)
 
 
@@ -31,6 +30,12 @@ def load_heatmaps(filename, symmetric=True):
         return None
     heatmaps, *_ = load_dataset(filename)
     if (heatmaps >= 0).all():
-        print("Warning: heatmaps where not stored in logaritmic space, conversion may be lossy!")
+        print(
+            "Warning: heatmaps where not stored in logaritmic space, conversion may be lossy!"
+        )
         heatmaps = np.log(heatmaps)
-    return heatmaps if not symmetric else np.maximum(heatmaps, np.transpose(heatmaps, (0, 2, 1)))
+    return (
+        heatmaps
+        if not symmetric
+        else np.maximum(heatmaps, np.transpose(heatmaps, (0, 2, 1)))
+    )

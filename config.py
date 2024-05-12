@@ -8,30 +8,30 @@ class Settings(dict):
 
     Experiment parameters:
         "expt_name": Name/description of experiment, used for logging.
-        
+
         "train_filepath": Training set path
         "val_filepath": Validation set path
         "test_filepath": Test set path
-        
+
         "num_nodes": Number of nodes in TSP tours
-        
+
         "node_dim": Number of dimensions for each node
         "voc_nodes_in": Input node signal vocabulary size
         "voc_nodes_out": Output node prediction vocabulary size
         "voc_edges_in": Input edge signal vocabulary size
         "voc_edges_out": Output edge prediction vocabulary size
-        
+
         "beam_size": Beam size for beamsearch procedure (-1 for disabling beamsearch)
-        
+
         "hidden_dim": Dimension of model's hidden state
         "num_layers": Number of GCN layers
         "mlp_layers": Number of MLP layers
         "aggregation": Node aggregation scheme in GCN (`mean` or `sum`)
-        
+
         "max_epochs": Maximum training epochs
         "val_every": Interval (in epochs) at which validation is performed
         "test_every": Interval (in epochs) at which testing is performed
-        
+
         "batch_size": Batch size
         "batches_per_epoch": Batches per epoch (-1 for using full training set)
         "accumulation_steps": Number of steps for gradient accumulation (DO NOT USE: BUGGY)
@@ -59,14 +59,12 @@ class Settings(dict):
 
 
 def get_default_config():
-    """Returns default settings object.
-    """
+    """Returns default settings object."""
     return Settings(json.load(open("./configs/default.json")))
 
 
 def get_config(filepath):
-    """Returns settings from json file.
-    """
+    """Returns settings from json file."""
     config = get_default_config()
     config.update(Settings(json.load(open(filepath))))
     return config

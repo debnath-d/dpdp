@@ -1,8 +1,7 @@
 import torch
-
-from utils.sorting_utils import kthvalue_via_cupy, kthvalue, unique_inverse, bincount
-from utils.scatter_utils import csr_to_counts, counts_to_csr, coo_to_csr
 from torch_scatter import scatter_max
+from utils.scatter_utils import coo_to_csr, counts_to_csr, csr_to_counts
+from utils.sorting_utils import bincount, kthvalue, kthvalue_via_cupy, unique_inverse
 
 
 class SimpleBatchTopK:
@@ -12,7 +11,6 @@ class SimpleBatchTopK:
     """
 
     def __init__(self, capacity):
-
         self.capacity = capacity
         self._payloads = []
         self._keys = []
@@ -66,9 +64,16 @@ class SimpleBatchTopK:
 
         csr = coo_to_csr(batch_ids_sorted, filter_unique=True)
         offsets = torch.repeat_interleave(csr[:-1], csr_to_counts(csr))
-        idx = argsort[torch.arange(len(batch_ids_sorted), out=counts.new()) < offsets + self.capacity]
+        idx = argsort[
+            torch.arange(len(batch_ids_sorted), out=counts.new())
+            < offsets + self.capacity
+        ]
         self._num_items_reduced = len(keys)
-        self._reduced = (keys[idx], [torch.cat(pl, 0)[idx] for pl in zip(*self._payloads)], batch_ids[idx])
+        self._reduced = (
+            keys[idx],
+            [torch.cat(pl, 0)[idx] for pl in zip(*self._payloads)],
+            batch_ids[idx],
+        )
 
 
 class StreamingTopK:
@@ -85,18 +90,39 @@ class StreamingTopK:
     These parameters also affect how often the bound is computed.
     """
 
-    def __init__(self, capacity, dtype=torch.float, device=None, reduce_to_extra_factor=1.1, start_when_extra_factor=1.8, alloc_size_factor=2.0, payload_dtypes=None, kthvalue_method=None, verbose=False, batch_size=1):
+    def __init__(
+        self,
+        capacity,
+        dtype=torch.float,
+        device=None,
+        reduce_to_extra_factor=1.1,
+        start_when_extra_factor=1.8,
+        alloc_size_factor=2.0,
+        payload_dtypes=None,
+        kthvalue_method=None,
+        verbose=False,
+        batch_size=1,
+    ):
         # The tradeoff in the reduce parameters is very subtle.
         # For the topk it seems most efficient to reduce to 50% when we have twice the buffer size
         # although this requires much more memory and makes the bound weaker then if we reduce earlier
         # but that takes extra cost in the binary search
 
         batch_capacity = batch_size * capacity
-        self.memory_size = int(max(batch_capacity * alloc_size_factor, 1000 * min(batch_size, 10000))) # At least 1000 / instance to not over'optimize' small cases
+        self.memory_size = int(
+            max(batch_capacity * alloc_size_factor, 1000 * min(batch_size, 10000))
+        )  # At least 1000 / instance to not over'optimize' small cases
         self._key = torch.empty(self.memory_size, dtype=dtype, device=device)
-        self._payload = [torch.empty(self.memory_size, dtype=pl_dt, device=device) for pl_dt in payload_dtypes]
+        self._payload = [
+            torch.empty(self.memory_size, dtype=pl_dt, device=device)
+            for pl_dt in payload_dtypes
+        ]
         assert batch_size <= 32000
-        self._batch_ids = torch.empty(self.memory_size, dtype=torch.uint8 if batch_size < 256 else torch.int16, device=device)
+        self._batch_ids = torch.empty(
+            self.memory_size,
+            dtype=torch.uint8 if batch_size < 256 else torch.int16,
+            device=device,
+        )
         self.capacity = capacity
         self.batch_size = batch_size
         self.batch_capacity = batch_capacity
@@ -105,8 +131,8 @@ class StreamingTopK:
         self.start_when_queue_size = int(batch_capacity * start_when_extra_factor)
         self.device = device
         self.verbose = verbose
-        if kthvalue_method is None or kthvalue_method == 'auto':
-            self.kthvalue_method = 'sort'
+        if kthvalue_method is None or kthvalue_method == "auto":
+            self.kthvalue_method = "sort"
             # Uncommenting below may give you better performance but is somewhat experimental
             # if self.batch_size == 1:
             #     self.kthvalue_method = ('kthvalue' if device == torch.device('cpu') else 'cupy_kthvalue' if batch_capacity <= 1e6 else 'mykthvalue')
@@ -115,18 +141,28 @@ class StreamingTopK:
 
         # These are properties that need to be reset
         self._num_items = 0  # Current number of items in the queue
-        self._batch_num_items_lb = torch.zeros(batch_size, dtype=torch.long, device=device)
-        self._infbound = (torch.finfo if dtype.is_floating_point else torch.iinfo)(dtype).max
-        self.bound = None if batch_size == 1 else self._key.new_full((self.batch_size, ), self._infbound)
+        self._batch_num_items_lb = torch.zeros(
+            batch_size, dtype=torch.long, device=device
+        )
+        self._infbound = (torch.finfo if dtype.is_floating_point else torch.iinfo)(
+            dtype
+        ).max
+        self.bound = (
+            None
+            if batch_size == 1
+            else self._key.new_full((self.batch_size,), self._infbound)
+        )
         self.total_items_queued = 0  # Total number of items added to the queue ever
         self._num_items_reduced = None  # Number of items reduced in last reduction
 
     def get_key(self, device=None, copy=True):
         self._reduce(True)
         assert self._num_items <= self.batch_capacity
-        key = self._key[:self._num_items]
+        key = self._key[: self._num_items]
         # Always return a copy since we reuse the buffer, unless explicitly asked for!
-        return torch.empty_like(key, device=device).copy_(key) if copy else key.to(device)
+        return (
+            torch.empty_like(key, device=device).copy_(key) if copy else key.to(device)
+        )
 
     def get_payload(self, device=None, copy=True):
         self._reduce(True)
@@ -134,14 +170,19 @@ class StreamingTopK:
         # Always return a copy since we reuse the buffer, unless explicitly asked for!
         return [
             torch.empty_like(pl, device=device).copy_(pl) if copy else pl.to(device)
-            for pl in
-            (pl[:self._num_items] for pl in self._payload)
+            for pl in (pl[: self._num_items] for pl in self._payload)
         ]
 
     def reset(self):
         self._num_items = 0  # Current number of items in the queue
-        self._batch_num_items_lb = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
-        self.bound = None if self.batch_size == 1 else self._key.new_full((self.batch_size, ), self._infbound)
+        self._batch_num_items_lb = torch.zeros(
+            self.batch_size, dtype=torch.long, device=self.device
+        )
+        self.bound = (
+            None
+            if self.batch_size == 1
+            else self._key.new_full((self.batch_size,), self._infbound)
+        )
         self.total_items_queued = 0  # Total number of items added to the queue ever
         self._num_items_reduced = None  # Number of items reduced in last reduction
 
@@ -166,7 +207,7 @@ class StreamingTopK:
         return (
             key.gather(0, idx),
             [payl.gather(0, idx) for payl in payload],
-            batch_ids.gather(0, idx) if batch_ids is not None else None
+            batch_ids.gather(0, idx) if batch_ids is not None else None,
         )
 
     def enqueue(self, key, payload, batch_ids=None, already_bounded=False):
@@ -178,10 +219,16 @@ class StreamingTopK:
         remaining_memory_size = self.get_remaining_memory_size()
         while num_add > remaining_memory_size:
             # We are in bad luck as we cannot enqueue everything and have to sort
-            self._add_to_memory(key[:remaining_memory_size], [pl[:remaining_memory_size] for pl in payload], batch_ids[:remaining_memory_size] if self.batch_size > 1 else None)
+            self._add_to_memory(
+                key[:remaining_memory_size],
+                [pl[:remaining_memory_size] for pl in payload],
+                batch_ids[:remaining_memory_size] if self.batch_size > 1 else None,
+            )
             key = key[remaining_memory_size:]
             payload = [pl[remaining_memory_size:] for pl in payload]
-            batch_ids = batch_ids[remaining_memory_size:] if self.batch_size > 1 else None
+            batch_ids = (
+                batch_ids[remaining_memory_size:] if self.batch_size > 1 else None
+            )
             self._reduce()
             # After reduction, bound was updated, so filter remaining
             key, payload, batch_ids = self.apply_bound(key, payload, batch_ids)
@@ -200,17 +247,21 @@ class StreamingTopK:
 
     def _add_to_memory(self, key, payload, batch_ids=None):
         num_add = key.size(0)
-        self._key[self._num_items:self._num_items+num_add] = key
-        for (payload, add_pl) in zip(self._payload, payload):
-            payload[self._num_items:self._num_items+num_add] = add_pl
+        self._key[self._num_items : self._num_items + num_add] = key
+        for payload, add_pl in zip(self._payload, payload):
+            payload[self._num_items : self._num_items + num_add] = add_pl
         if self.batch_size > 1:
-            self._batch_ids[self._num_items:self._num_items+num_add] = batch_ids
+            self._batch_ids[self._num_items : self._num_items + num_add] = batch_ids
         self._num_items += num_add
         if self.batch_size > 1 and (self._batch_num_items_lb < self.capacity).any():
             # Add number of items per batch entry, and see if for some entries we exceed the capacity
             # for the first time so we can define a bound
-            new_batch_num_items = self._batch_num_items_lb + bincount(batch_ids, minlength=self.batch_size)
-            new_bound = (new_batch_num_items >= self.capacity) & (self._batch_num_items_lb < self.capacity)
+            new_batch_num_items = self._batch_num_items_lb + bincount(
+                batch_ids, minlength=self.batch_size
+            )
+            new_bound = (new_batch_num_items >= self.capacity) & (
+                self._batch_num_items_lb < self.capacity
+            )
             self._batch_num_items_lb = new_batch_num_items
             if new_bound.any():
                 # Note: this is not a very tight bound, we can get a tighter bound by taking the max of the first
@@ -219,19 +270,32 @@ class StreamingTopK:
                 # but when the queue is actually reduced
                 self.bound = torch.where(
                     new_bound,
-                    scatter_max(self._key[:self._num_items], self._batch_ids[:self._num_items].long(), dim_size=self.batch_size)[0],
-                    self.bound
+                    scatter_max(
+                        self._key[: self._num_items],
+                        self._batch_ids[: self._num_items].long(),
+                        dim_size=self.batch_size,
+                    )[0],
+                    self.bound,
                 )
-        elif self._num_items >= self.capacity and self.bound is None and self.batch_size == 1:
+        elif (
+            self._num_items >= self.capacity
+            and self.bound is None
+            and self.batch_size == 1
+        ):
             # As soon as we have more than capacity items for the first time, we can define a bound
             # using the first 'capacity' items (gives slightly better bound than using _num_items items)
-            self.bound = self._key[:self.capacity].max().cpu()
+            self.bound = self._key[: self.capacity].max().cpu()
 
     def _reduce(self, final=False):
         if final:
             if self.batch_size > 1:
                 # Note: we cannot use self._batch_num_items_lb, we must have an upper bound
-                if (bincount(self._batch_ids[:self._num_items], minlength=self.batch_size) <= self.capacity).all():
+                if (
+                    bincount(
+                        self._batch_ids[: self._num_items], minlength=self.batch_size
+                    )
+                    <= self.capacity
+                ).all():
                     return
             else:
                 if self._num_items <= self.capacity:
@@ -241,15 +305,15 @@ class StreamingTopK:
 
             # self.bound = key.max() if len(key) >= max_beam_size else None
         self._num_items_reduced = self._num_items
-        key = self._key[:self._num_items]
+        key = self._key[: self._num_items]
 
         if self.verbose:
-            print('Try to reduce', self._num_items, 'values')
+            print("Try to reduce", self._num_items, "values")
 
         if self.batch_size > 1:
-            assert self.kthvalue_method == 'sort'
+            assert self.kthvalue_method == "sort"
 
-            batch_ids = self._batch_ids[:self._num_items]
+            batch_ids = self._batch_ids[: self._num_items]
 
             inverse, counts = unique_inverse([batch_ids, key], return_counts=True)
             argsort = torch.argsort(inverse)
@@ -261,7 +325,10 @@ class StreamingTopK:
             csr = coo_to_csr(batch_ids_sorted, minlength=self.batch_size)
             counts = csr_to_counts(csr)
             offsets = torch.repeat_interleave(csr[:-1], counts)
-            idx = argsort[torch.arange(len(batch_ids_sorted), out=counts.new()) < offsets + self.capacity]
+            idx = argsort[
+                torch.arange(len(batch_ids_sorted), out=counts.new())
+                < offsets + self.capacity
+            ]
 
             count_le = len(idx)
             self._num_items_reduced = len(key)
@@ -278,39 +345,60 @@ class StreamingTopK:
                 # Also filter the csr representation
                 csr = counts_to_csr(counts.clip(max=self.capacity))
                 assert csr[-1] == count_le
-                maxval = (torch.finfo if torch.is_floating_point(self._key) else torch.iinfo)(self._key.dtype).max
-                self.bound = torch.where(counts >= self.capacity, self._key[csr[1:] - 1], self._key.new_tensor(maxval))
+                maxval = (
+                    torch.finfo if torch.is_floating_point(self._key) else torch.iinfo
+                )(self._key.dtype).max
+                self.bound = torch.where(
+                    counts >= self.capacity,
+                    self._key[csr[1:] - 1],
+                    self._key.new_tensor(maxval),
+                )
 
-        elif self.kthvalue_method == 'sort' or self.kthvalue_method == 'topk':
-            vals, inds = torch.sort(key) if self.kthvalue_method == 'sort' else torch.topk(key, self.capacity)
-            self._key[:self.capacity] = vals[:self.capacity]
+        elif self.kthvalue_method == "sort" or self.kthvalue_method == "topk":
+            vals, inds = (
+                torch.sort(key)
+                if self.kthvalue_method == "sort"
+                else torch.topk(key, self.capacity)
+            )
+            self._key[: self.capacity] = vals[: self.capacity]
             for pl in self._payload:
-                pl[:self.capacity] = pl.gather(0, inds[:self.capacity])
+                pl[: self.capacity] = pl.gather(0, inds[: self.capacity])
 
             count_le = self.capacity
-            if self.kthvalue_method == 'sort':
-                self.bound = self._key[self.capacity-1].cpu()  # To prevent cross device issues
+            if self.kthvalue_method == "sort":
+                self.bound = self._key[
+                    self.capacity - 1
+                ].cpu()  # To prevent cross device issues
             else:
                 # Not sure if we can rely on sorting
-                self.bound = self._key[:self.capacity].max().cpu()
+                self.bound = self._key[: self.capacity].max().cpu()
         else:
-            if (self.kthvalue_method == 'cupy_kthvalue' or final) and key.device != torch.device('cpu'):  # For exactly getting k, it seems always fastest to use cupy
+            if (
+                self.kthvalue_method == "cupy_kthvalue" or final
+            ) and key.device != torch.device(
+                "cpu"
+            ):  # For exactly getting k, it seems always fastest to use cupy
                 # kth_val = kthvalue_via_cupy(key.to(torch.device('cuda:0')), self.capacity).to(key.device)
                 kth_val = kthvalue_via_cupy(key, self.capacity)
                 mask = key <= kth_val
                 count_le = mask.sum()
-            elif self.kthvalue_method == 'mykthvalue':
-
+            elif self.kthvalue_method == "mykthvalue":
                 mask = torch.empty_like(key, dtype=torch.bool)
                 # We don't need to completely find topk, roughly is ok until final (1.01 if you care about memory) otherwise (1.1)
-                kth_val, count_le = kthvalue(key, self.capacity, outmask=mask, return_count_le=True,
-                                             min_steps=1, early_stop_max_k=self.reduce_to_size if not final else None)
-            elif self.kthvalue_method == 'sort_kthvalue':
+                kth_val, count_le = kthvalue(
+                    key,
+                    self.capacity,
+                    outmask=mask,
+                    return_count_le=True,
+                    min_steps=1,
+                    early_stop_max_k=self.reduce_to_size if not final else None,
+                )
+            elif self.kthvalue_method == "sort_kthvalue":
                 kth_val = torch.sort(key).values[self.capacity]
                 mask = key <= kth_val
                 count_le = mask.sum()
             else:
-                assert self.kthvalue_method == 'kthvalue'
+                assert self.kthvalue_method == "kthvalue"
                 kth_val, _ = torch.kthvalue(key, self.capacity)
                 mask = key <= kth_val
                 count_le = mask.sum()
@@ -323,24 +411,37 @@ class StreamingTopK:
                 (ind_eq,) = (key == kth_val).nonzero(as_tuple=True)
                 assert len(ind_eq) > count_le - self.capacity
                 # mask[ind_eq[:-(count_le - self.capacity)]] = False
-                torch.index_fill(mask, 0, ind_eq[:-(count_le - self.capacity)], False)
+                torch.index_fill(mask, 0, ind_eq[: -(count_le - self.capacity)], False)
                 del ind_eq  # Free up some memory
                 count_le = self.capacity
 
-            (idx_enter_from_topk, ) = mask[count_le:].nonzero(as_tuple=True)
-            (idx_enter_to_topk, ) = mask.logical_not_()[:count_le].nonzero(as_tuple=True)
+            (idx_enter_from_topk,) = mask[count_le:].nonzero(as_tuple=True)
+            (idx_enter_to_topk,) = mask.logical_not_()[:count_le].nonzero(as_tuple=True)
             del mask  # Release some memory
 
-            self._key.scatter_(0, idx_enter_to_topk, self._key[count_le:].gather(0, idx_enter_from_topk))
+            self._key.scatter_(
+                0,
+                idx_enter_to_topk,
+                self._key[count_le:].gather(0, idx_enter_from_topk),
+            )
             for pl in self._payload:
-                pl.scatter_(0, idx_enter_to_topk, pl[count_le:].gather(0, idx_enter_from_topk))
+                pl.scatter_(
+                    0, idx_enter_to_topk, pl[count_le:].gather(0, idx_enter_from_topk)
+                )
 
-            self.bound = self._key[:count_le].max().cpu()  # To prevent cross device issues
+            self.bound = (
+                self._key[:count_le].max().cpu()
+            )  # To prevent cross device issues
 
         if self.verbose and self.batch_size == 1:
             print("Bound {:.2f}".format(self.bound.item()))
             # Bound is top k of _total_items_queued so this gives the quantile
             # This is the expected fraction of future items that you would expect to be below the bound
-            print("Bound quantile: {} / {} = {:.2f}".format(count_le, self.total_items_queued,
-                                                            count_le / self.total_items_queued))
+            print(
+                "Bound quantile: {} / {} = {:.2f}".format(
+                    count_le,
+                    self.total_items_queued,
+                    count_le / self.total_items_queued,
+                )
+            )
         self._num_items = int(count_le)

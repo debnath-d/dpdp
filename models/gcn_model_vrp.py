@@ -1,9 +1,9 @@
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
-from models.gcn_layers import ResidualGatedGCNLayer, MLP
+from models.gcn_layers import MLP, ResidualGatedGCNLayer
 
 
 class ResidualGatedGCNModelVRP(nn.Module):
@@ -15,23 +15,25 @@ class ResidualGatedGCNModelVRP(nn.Module):
     """
 
     def __init__(self, config, dtypeFloat, dtypeLong):
-        super(ResidualGatedGCNModelVRP, self).__init__()
+        super().__init__()
         self.dtypeFloat = dtypeFloat
         self.dtypeLong = dtypeLong
         # Define net parameters
         self.num_nodes = config.num_nodes
         self.node_dim = config.node_dim
-        self.voc_nodes_in = config['voc_nodes_in']
-        self.voc_nodes_out = config['num_nodes']  # config['voc_nodes_out']
-        self.voc_edges_in = config['voc_edges_in']
-        self.voc_edges_out = config['voc_edges_out']
-        self.hidden_dim = config['hidden_dim']
-        self.num_layers = config['num_layers']
-        self.mlp_layers = config['mlp_layers']
-        self.aggregation = config['aggregation']
-        self.num_segments_checkpoint = config.get('num_segments_checkpoint', 0)
+        self.voc_nodes_in = config["voc_nodes_in"]
+        self.voc_nodes_out = config["num_nodes"]  # config['voc_nodes_out']
+        self.voc_edges_in = config["voc_edges_in"]
+        self.voc_edges_out = config["voc_edges_out"]
+        self.hidden_dim = config["hidden_dim"]
+        self.num_layers = config["num_layers"]
+        self.mlp_layers = config["mlp_layers"]
+        self.aggregation = config["aggregation"]
+        self.num_segments_checkpoint = config.get("num_segments_checkpoint", 0)
         # Node and edge embedding layers/lookups
-        self.nodes_coord_embedding = nn.Linear(self.node_dim, self.hidden_dim // 2, bias=False)
+        self.nodes_coord_embedding = nn.Linear(
+            self.node_dim, self.hidden_dim // 2, bias=False
+        )
         # self.nodes_coord_embedding2 = nn.Linear(self.node_dim, self.hidden_dim, bias=False)
         self.edges_values_embedding = nn.Linear(1, self.hidden_dim // 2, bias=False)
         # self.edges_values_embedding2 = nn.Linear(1, self.hidden_dim, bias=False)
@@ -48,7 +50,15 @@ class ResidualGatedGCNModelVRP(nn.Module):
         self.mlp_edges = MLP(self.hidden_dim, self.voc_edges_out, self.mlp_layers)
         # self.mlp_nodes = MLP(self.hidden_dim, self.voc_nodes_out, self.mlp_layers)
 
-    def forward(self, x_edges, x_edges_values, x_nodes, x_nodes_coord, y_edges=None, edge_cw=None):
+    def forward(
+        self,
+        x_edges,
+        x_edges_values,
+        x_nodes,
+        x_nodes_coord,
+        y_edges=None,
+        edge_cw=None,
+    ):
         """
         Args:
             x_edges: Input edge adjacency matrix (batch_size, num_nodes, num_nodes)
@@ -71,14 +81,18 @@ class ResidualGatedGCNModelVRP(nn.Module):
         x_tags = self.nodes_embedding(x_nodes)
         x = torch.cat((x_vals, x_tags), -1)
         # x = self.nodes_embedding2(x_nodes)
-        e_vals = self.edges_values_embedding(x_edges_values.unsqueeze(3))  # B x V x V x H
+        e_vals = self.edges_values_embedding(
+            x_edges_values.unsqueeze(3)
+        )  # B x V x V x H
         e_tags = self.edges_embedding(x_edges)  # B x V x V x H
         e = torch.cat((e_vals, e_tags), -1)
-        #e = self.edges_values_embedding2(x_edges_values.unsqueeze(3))
+        # e = self.edges_values_embedding2(x_edges_values.unsqueeze(3))
         # GCN layers
         if self.num_segments_checkpoint != 0:
             layer_functions = [lambda args: layer(*args) for layer in self.gcn_layers]
-            x, e = torch.utils.checkpoint.checkpoint_sequential(layer_functions, self.num_segments_checkpoint, (x, e))
+            x, e = torch.utils.checkpoint.checkpoint_sequential(
+                layer_functions, self.num_segments_checkpoint, (x, e)
+            )
         else:
             for layer in range(self.num_layers):
                 # B x V x H, B x V x V x H
@@ -87,7 +101,7 @@ class ResidualGatedGCNModelVRP(nn.Module):
         y_pred_edges = self.mlp_edges(e)  # B x V x V x voc_edges_out
         # y_pred_nodes = self.mlp_nodes(x)  # B x V x voc_nodes_out
 
-        #loss = loss_edges(y_pred_edges, y_edges, edge_cw)
+        # loss = loss_edges(y_pred_edges, y_edges, edge_cw)
         # Edge loss
         y = F.log_softmax(y_pred_edges, dim=3)  # B x V x V x voc_edges
         # For some reason we must make things contiguous to prevent errors during backward
@@ -99,5 +113,5 @@ class ResidualGatedGCNModelVRP(nn.Module):
             loss = nn.NLLLoss(edge_cw)(y_perm, y_edges)
         else:
             loss = None
-        
+
         return y_pred_edges, loss

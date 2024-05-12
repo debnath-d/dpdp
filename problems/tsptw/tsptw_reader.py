@@ -1,24 +1,33 @@
 import os
 import time
+
 import numpy as np
-from scipy.spatial.distance import pdist, cdist, squareform
+from scipy.spatial.distance import cdist, pdist, squareform
 from sklearn.utils import shuffle
 from utils.data_utils import load_dataset
 
+
 class DotDict(dict):
-    """Wrapper around in-built dict class to access members through the dot operation.
-    """
+    """Wrapper around in-built dict class to access members through the dot operation."""
 
     def __init__(self, **kwds):
         self.update(kwds)
         self.__dict__ = self
 
 
-class TSPTWReader(object):
-    """Iterator that reads TSPTW dataset files and yields mini-batches.
-    """
+class TSPTWReader:
+    """Iterator that reads TSPTW dataset files and yields mini-batches."""
 
-    def __init__(self, num_nodes, num_neighbors, batch_size, filepath, target_filepath=None, do_shuffle=False, do_prep=False):
+    def __init__(
+        self,
+        num_nodes,
+        num_neighbors,
+        batch_size,
+        filepath,
+        target_filepath=None,
+        do_shuffle=False,
+        do_prep=False,
+    ):
         assert not do_prep, "TSPTWReader does not prepare data, use PrepWrapper"
         """
         Args:
@@ -37,7 +46,13 @@ class TSPTWReader(object):
         if target_filepath is not None:
             self.has_target = True
             target_filedata, parallelism = load_dataset(target_filepath)
-            self.filedata = list([(inst, sol) for inst, sol in zip(filedata, target_filedata) if sol is not None and sol[1] is not None])
+            self.filedata = list(
+                [
+                    (inst, sol)
+                    for inst, sol in zip(filedata, target_filedata)
+                    if sol is not None and sol[1] is not None
+                ]
+            )
         else:
             self.has_target = False
             self.filedata = list([(inst, None) for inst in filedata])
@@ -45,8 +60,12 @@ class TSPTWReader(object):
         if do_shuffle:
             self.shuffle()
 
-        self.max_iter = (len(self.filedata) // batch_size)
-        assert self.max_iter > 0, "Not enough instances ({}) for batch size ({})".format(len(self.filedata), batch_size)
+        self.max_iter = len(self.filedata) // batch_size
+        assert (
+            self.max_iter > 0
+        ), "Not enough instances ({}) for batch size ({})".format(
+            len(self.filedata), batch_size
+        )
 
     def shuffle(self):
         self.filedata = shuffle(self.filedata)  # Always shuffle upon reading data
@@ -58,8 +77,7 @@ class TSPTWReader(object):
             yield self.process_batch(self.filedata[start_idx:end_idx])
 
     def process_batch(self, batch):
-        """Helper function to convert raw lines into a mini-batch as a DotDict.
-        """
+        """Helper function to convert raw lines into a mini-batch as a DotDict."""
         batch_nodes_coord = []
         batch_nodes_timew = []
         batch_tour_nodes = []
@@ -75,7 +93,9 @@ class TSPTWReader(object):
             # Todo: should we additionally normalize somehow, e.g. by expected makespan/tour length?
             nodes_timew = timew / max_coord
             # Upper bound for depot = max(node ub + dist to depot), to make this tight
-            nodes_timew[0, 1] = (cdist(nodes_coord[0][None], nodes_coord[1:]) + nodes_timew[1:, 1]).max()
+            nodes_timew[0, 1] = (
+                cdist(nodes_coord[0][None], nodes_coord[1:]) + nodes_timew[1:, 1]
+            ).max()
 
             # nodes_timew = nodes_timew / nodes_timew[0, 1]
 
@@ -84,7 +104,7 @@ class TSPTWReader(object):
                 # Don't add final connection for tour/cycle
                 # tour_nodes = [int(node) - 1 for node in line[line.index('output') + 1:-1]][:-1]
                 # dummy for now, no supervision!
-                check_cost, tour_nodes, duration = sol #list(range(len(nodes)))
+                check_cost, tour_nodes, duration = sol  # list(range(len(nodes)))
 
                 tour_len = np.array(check_cost)
 

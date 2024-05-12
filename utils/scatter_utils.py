@@ -23,10 +23,13 @@ def segment_cummax_coo(vals, coo, max_group_size=None, max_func=torch.maximum):
     # minval = vals.min()  # Or use min of typeinfo?
     #     minval = 0
     # max_vals[0] = vals[0]
-    while (step < max_group_size):
+    while step < max_group_size:
         # For some stupid reason torch.where has no out parameter
-        max_vals[step:] = torch.where(coo[step:] == coo[:-step], max_func(max_vals[step:], max_vals[:-step]),
-                                      max_vals[step:])
+        max_vals[step:] = torch.where(
+            coo[step:] == coo[:-step],
+            max_func(max_vals[step:], max_vals[:-step]),
+            max_vals[step:],
+        )
 
         #         torch.maximum(max_vals[step:], max_vals[:-step].masked_fill(coo[step:] != coo[:-step], minval), out=max_vals[step:])
 
@@ -79,23 +82,38 @@ def segment_sort_coo(vals, coo, max_group_size=None, do_checks=False):
         assert vals.min() >= 0
 
     # Fill the padded values keeping one half block empty in front and at the end
-    vals_pad = torch.empty((num_blocks + 1) * BLOCK_SIZE, dtype=torch.long, device=vals.device)
-    key = torch.bitwise_or(coo.long() << 32, vals.int(), out=vals_pad[HALF_BLOCK_SIZE:HALF_BLOCK_SIZE + n])
+    vals_pad = torch.empty(
+        (num_blocks + 1) * BLOCK_SIZE, dtype=torch.long, device=vals.device
+    )
+    key = torch.bitwise_or(
+        coo.long() << 32,
+        vals.int(),
+        out=vals_pad[HALF_BLOCK_SIZE : HALF_BLOCK_SIZE + n],
+    )
     linfo = torch.iinfo(torch.long)
     vals_pad[:HALF_BLOCK_SIZE] = linfo.min
-    vals_pad[HALF_BLOCK_SIZE + n:] = linfo.max
+    vals_pad[HALF_BLOCK_SIZE + n :] = linfo.max
 
     # Now sort twice
     vals_sorted, vals_argsort = vals_pad.view(num_blocks + 1, BLOCK_SIZE).sort(-1)
 
     # Add offsets to make correspond to flat unpadded index
     vals_argsort.add_(
-        torch.arange(num_blocks + 1, device=vals_argsort.device).mul_(BLOCK_SIZE).sub_(HALF_BLOCK_SIZE)[:, None])
-    vals_sorted2, vals_argsort2 = vals_sorted.view(-1)[HALF_BLOCK_SIZE:-HALF_BLOCK_SIZE].view(num_blocks,
-                                                                                              BLOCK_SIZE).sort(-1)
-    final_argsort = vals_argsort.view(-1)[HALF_BLOCK_SIZE:-HALF_BLOCK_SIZE].view(num_blocks, BLOCK_SIZE).gather(-1,
-                                                                                                                vals_argsort2).view(
-        -1)[:n]
+        torch.arange(num_blocks + 1, device=vals_argsort.device)
+        .mul_(BLOCK_SIZE)
+        .sub_(HALF_BLOCK_SIZE)[:, None]
+    )
+    vals_sorted2, vals_argsort2 = (
+        vals_sorted.view(-1)[HALF_BLOCK_SIZE:-HALF_BLOCK_SIZE]
+        .view(num_blocks, BLOCK_SIZE)
+        .sort(-1)
+    )
+    final_argsort = (
+        vals_argsort.view(-1)[HALF_BLOCK_SIZE:-HALF_BLOCK_SIZE]
+        .view(num_blocks, BLOCK_SIZE)
+        .gather(-1, vals_argsort2)
+        .view(-1)[:n]
+    )
     final_vals_sorted = vals.gather(0, final_argsort)
 
     if do_checks:

@@ -1,26 +1,36 @@
 import os
 import time
+
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
 from sklearn.utils import shuffle
 from utils.data_utils import load_dataset
 
+
 class DotDict(dict):
-    """Wrapper around in-built dict class to access members through the dot operation.
-    """
+    """Wrapper around in-built dict class to access members through the dot operation."""
 
     def __init__(self, **kwds):
         self.update(kwds)
         self.__dict__ = self
 
 
-class TSPReader(object):
+class TSPReader:
     """Iterator that reads TSP dataset files and yields mini-batches.
 
     Format as used in https://github.com/wouterkool/attention-learn-to-route
     """
 
-    def __init__(self, num_nodes, num_neighbors, batch_size, filepath, target_filepath=None, do_shuffle=False, do_prep=True):
+    def __init__(
+        self,
+        num_nodes,
+        num_neighbors,
+        batch_size,
+        filepath,
+        target_filepath=None,
+        do_shuffle=False,
+        do_prep=True,
+    ):
         """
         Args:
             num_nodes: Number of nodes in TSP tours
@@ -38,7 +48,13 @@ class TSPReader(object):
         if target_filepath is not None:
             self.has_target = True
             target_filedata, parallelism = load_dataset(target_filepath)
-            self.filedata = list([(inst, sol) for inst, sol in zip(filedata, target_filedata) if sol is not None])
+            self.filedata = list(
+                [
+                    (inst, sol)
+                    for inst, sol in zip(filedata, target_filedata)
+                    if sol is not None
+                ]
+            )
         else:
             self.has_target = False
             self.filedata = list([(inst, None) for inst in filedata])
@@ -48,8 +64,12 @@ class TSPReader(object):
         if do_shuffle:
             self.shuffle()
 
-        self.max_iter = (len(self.filedata) // batch_size)
-        assert self.max_iter > 0, "Not enough instances ({}) for batch size ({})".format(len(self.filedata), batch_size)
+        self.max_iter = len(self.filedata) // batch_size
+        assert (
+            self.max_iter > 0
+        ), "Not enough instances ({}) for batch size ({})".format(
+            len(self.filedata), batch_size
+        )
 
     def shuffle(self):
         self.filedata = shuffle(self.filedata)  # Always shuffle upon reading data
@@ -61,8 +81,7 @@ class TSPReader(object):
             yield self.process_batch(self.filedata[start_idx:end_idx])
 
     def process_batch(self, batch):
-        """Helper function to convert raw lines into a mini-batch as a DotDict.
-        """
+        """Helper function to convert raw lines into a mini-batch as a DotDict."""
         batch_edges = []
         batch_edges_values = []
         batch_edges_target = []  # Binary classification targets (0/1)
@@ -85,15 +104,19 @@ class TSPReader(object):
                 #                 nodes_coord.append([float(line[idx]), float(line[idx + 1])])
 
                 # Compute distance matrix
-                W_val = squareform(pdist(nodes_coord, metric='euclidean'))
+                W_val = squareform(pdist(nodes_coord, metric="euclidean"))
 
                 # Compute adjacency matrix
                 if self.num_neighbors == -1:
-                    W = np.ones((self.num_nodes, self.num_nodes))  # Graph is fully connected
+                    W = np.ones(
+                        (self.num_nodes, self.num_nodes)
+                    )  # Graph is fully connected
                 else:
                     W = np.zeros((self.num_nodes, self.num_nodes))
                     # Determine k-nearest neighbors for each node
-                    knns = np.argpartition(W_val, kth=self.num_neighbors, axis=-1)[:, self.num_neighbors::-1]
+                    knns = np.argpartition(W_val, kth=self.num_neighbors, axis=-1)[
+                        :, self.num_neighbors :: -1
+                    ]
                     # Make connections
                     for idx in range(self.num_nodes):
                         W[idx][knns[idx]] = 1
